@@ -1,33 +1,37 @@
 # Sentinel AI — Single Agent Project
 
-## What it does
-- Takes example security activity values.
-- Uses a Random Forest ML model trained on synthetic demo data.
-- A single agent selects LOW, MEDIUM, or HIGH risk and an action.
-- Shows results in a Streamlit dashboard.
+Streamlit dashboard: Random Forest (synthetic demo data) + rule-guided agent + live
+threat intelligence from **AbuseIPDB** and **VirusTotal**. Blocking is simulated only.
 
-**Safety and limitations:** It does not monitor a real network or block real IP addresses. Blocking is simulated. The initial model uses synthetic data for learning/demo purposes; its metrics are not real-world security claims.
+## Files
+- `app.py` – main app (set this as the Main file path on Streamlit Cloud)
+- `threat_intel.py` – AbuseIPDB / VirusTotal clients (keys from Secrets, errors handled)
+- `requirements.txt` – dependencies
+- `.streamlit/secrets.toml.example` – template for your keys (never commit the real file)
 
-## Run on Windows
-1. Install Python 3.11 or 3.12 from https://www.python.org/downloads/ and tick **Add Python to PATH**.
-2. Extract this ZIP.
-3. Open the extracted folder in File Explorer. Click the address bar, type `cmd`, and press Enter.
-4. Run these commands one by one:
+## API keys
+- AbuseIPDB: https://www.abuseipdb.com/account/api  (free key)
+- VirusTotal: https://www.virustotal.com/gui/my-apikey  (free key)
 
-```bash
+Keys are optional: without them the dashboard still runs and shows a friendly notice.
+
+## Run locally (Windows)
+```
 py -m venv .venv
-.venv\\Scripts\\activate
-py -m pip install --upgrade pip
+.venv\Scripts\activate
 pip install -r requirements.txt
+copy .streamlit\secrets.toml.example .streamlit\secrets.toml   (then edit it with your keys)
 streamlit run app.py
 ```
 
-5. A browser tab opens. If not, open `http://localhost:8501`.
-6. Stop with Ctrl+C in the terminal.
-
-If `py` is not recognized, try `python --version`. If neither works, reinstall Python and enable Add Python to PATH.
-
-## Files
-- `app.py`: dashboard, demo model, and single-agent decision policy.
-- `requirements.txt`: Python libraries.
-- `README.md`: setup instructions.
+## Deploy on Streamlit Community Cloud
+1. Create a GitHub repo and upload these files (`.gitignore` keeps secrets.toml out).
+2. Go to https://share.streamlit.io → **Create app** → pick the repo, branch `main`,
+   **Main file path: `app.py`**.
+3. Open **Advanced settings → Secrets** and paste:
+```
+ABUSEIPDB_API_KEY = "your-key"
+VIRUSTOTAL_API_KEY = "your-key"
+```
+4. Click **Deploy**. Your URL will look like `https://<your-app-name>.streamlit.app`.
+   Secrets can be changed later in App → Settings → Secrets.

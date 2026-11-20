@@ -4,6 +4,7 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import threat_intel as ti
 
 st.set_page_config(page_title="Sentinel AI", page_icon="🛡️", layout="wide")
 
@@ -59,26 +60,52 @@ def train_model():
 
 model,metrics=train_model()
 
-def agent_decision(v):
+def agent_decision(v,abuse=None,vt=None):
     row=pd.DataFrame([v]); p=float(model.predict_proba(row)[0][1])
     if p>=.75 or (v["failed_logins"]>=20 and v["requests_per_minute"]>=90):
-        return p,"HIGH","Simulate temporary IP block + create alert","Several warning signals were found. The agent chooses a high-priority response."
-    if p>=.40 or v["failed_logins"]>=8:
-        return p,"MEDIUM","Raise warning + keep monitoring","Some warning signals were found. The agent asks for attention."
-    return p,"LOW","Log activity + continue monitoring","The input looks closer to normal examples in this demo dataset."
+        level,action,why="HIGH","Simulate temporary IP block + create alert","Several warning signals were found. The agent chooses a high-priority response."
+    elif p>=.40 or v["failed_logins"]>=8:
+        level,action,why="MEDIUM","Raise warning + keep monitoring","Some warning signals were found. The agent asks for attention."
+    else:
+        level,action,why="LOW","Log activity + continue monitoring","The input looks closer to normal examples in this demo dataset."
+    floor=ti.intel_floor(abuse,vt)
+    order={"LOW":0,"MEDIUM":1,"HIGH":2}
+    if floor and order[floor]>order[level]:
+        level=floor
+        action="Simulate temporary IP block + create alert" if floor=="HIGH" else "Raise warning + keep monitoring"
+        why="Threat-intelligence feeds (AbuseIPDB / VirusTotal) flagged this source, so the agent raised the risk level."
+    elif floor:
+        why+=" Threat-intelligence feeds also flagged this source."
+    return p,level,action,why
+
+def render_intel(abuse,vt):
+    if abuse is not None:
+        if abuse.get("ok"):
+            st.markdown(f"**AbuseIPDB** — `{abuse['ip']}`")
+            c=st.columns(3); c[0].metric("Abuse confidence",f"{abuse['score']}%"); c[1].metric("Reports (90d)",abuse["reports"]); c[2].metric("Country",abuse["country"])
+            st.caption(f"ISP: {abuse['isp']} · Usage: {abuse['usage']} · Domain: {abuse['domain']} · Last reported: {abuse['last_reported']}")
+        else: st.warning(abuse["error"])
+    if vt is not None:
+        if vt.get("ok"):
+            st.markdown(f"**VirusTotal** — {vt['kind']}: `{vt['indicator']}`")
+            c=st.columns(4); c[0].metric("Malicious",vt["malicious"]); c[1].metric("Suspicious",vt["suspicious"]); c[2].metric("Harmless",vt["harmless"]); c[3].metric("Undetected",vt["undetected"])
+            st.caption(f"Reputation: {vt['reputation']} · Owner: {vt['owner']} · Country: {vt['country']}")
+        else: st.warning(vt["error"])
 
 with st.sidebar:
     st.markdown("## 🛡️ SENTINEL **AI**")
     st.markdown('<span class="pill">AUTONOMOUS SECURITY AGENT</span>',unsafe_allow_html=True)
     st.markdown(" ")
     st.caption("WORKSPACE")
-    page=st.radio("Go to",["🧭  Threat Console","📊  Model Insights","⚙️  Agent Workflow","🎓  Project Details"],label_visibility="collapsed")
-    page_map={"🧭  Threat Console":"Live Analysis","📊  Model Insights":"Model Performance","⚙️  Agent Workflow":"How It Works","🎓  Project Details":"About Project"}
+    page=st.radio("Go to",["🧭  Threat Console","🌐  Threat Intelligence","📊  Model Insights","⚙️  Agent Workflow","🎓  Project Details"],label_visibility="collapsed")
+    page_map={"🧭  Threat Console":"Live Analysis","🌐  Threat Intelligence":"Threat Intel","📊  Model Insights":"Model Performance","⚙️  Agent Workflow":"How It Works","🎓  Project Details":"About Project"}
     page=page_map[page]
     st.divider()
     st.markdown('<div style="padding:14px;border-radius:14px;background:#a3e63512;border:1px solid #a3e63535"><div style="color:#c4f76a;font-weight:700">● DEMO SYSTEM READY</div><div style="font-size:12px;color:#9aabc4;margin-top:6px">Local simulation · No live traffic</div></div>',unsafe_allow_html=True)
     st.markdown(" ")
     st.caption("Sentinel AI uses synthetic sample data. No real network is monitored or blocked.")
+    st.caption("API KEYS")
+    for _n,_ok in ti.key_status().items(): st.caption(("🟢 " if _ok else "⚪ ")+_n+(" configured" if _ok else " not set (optional)"))
 
 st.markdown('<div class="hero"><div class="eyebrow">AI-POWERED SECURITY • FINAL YEAR PROJECT</div><div class="hero-title">Cyber Threat Detection<br> & Intelligent Response</div><div class="muted">One intelligent agent uses Machine Learning to estimate risk, select a response, and explain its decision.</div></div>',unsafe_allow_html=True)
 
@@ -93,11 +120,18 @@ if page=="Live Analysis":
         ports=st.slider("Different ports contacted",1,40,2)
         sent=st.slider("Data sent (KB)",1,10000,800,step=100)
         odd=st.toggle("Activity happened at an unusual hour",False)
+        src_ip=st.text_input("Source IP (optional, enables AbuseIPDB / VirusTotal check)","",placeholder="e.g. 203.0.113.45")
         run=st.button("✦ ANALYZE ACTIVITY")
         st.markdown('</div>',unsafe_allow_html=True)
     values={"failed_logins":failed,"requests_per_minute":req,"unique_ports":ports,"bytes_sent_kb":sent,"unusual_hour":int(odd)}
     if run or "result" not in st.session_state:
-        st.session_state.result=agent_decision(values); st.session_state.activity_values=values
+        abuse=vt=None; ip=src_ip.strip()
+        if ip:
+            if ti.is_valid_ip(ip):
+                with st.spinner("Checking threat intelligence..."):
+                    abuse=ti.check_abuseipdb(ip); vt=ti.check_virustotal(ip)
+            else: abuse={"ok":False,"error":"Source IP is not a valid IPv4/IPv6 address; threat-intel check skipped."}
+        st.session_state.result=agent_decision(values,abuse,vt); st.session_state.activity_values=values; st.session_state.intel=(abuse,vt)
     p,risk,action,why=st.session_state.result; vals=st.session_state.activity_values
     with b:
         st.markdown('<div class="panel">',unsafe_allow_html=True); st.markdown("### Agent decision")
@@ -107,11 +141,30 @@ if page=="Live Analysis":
         st.markdown(f"**Selected action**\n\n{action}")
         st.markdown(f'<p class="muted">{why}</p>',unsafe_allow_html=True)
         st.info("Blocking is simulated only. No real IP or device is changed.")
+        _ab,_vt=st.session_state.get("intel",(None,None))
+        if _ab is not None or _vt is not None: render_intel(_ab,_vt)
         st.markdown('</div>',unsafe_allow_html=True)
     st.subheader("📌 Input summary")
     cols=st.columns(4)
     for col,(label,value) in zip(cols,[("Failed logins",vals["failed_logins"]),("Requests / min",vals["requests_per_minute"]),("Unique ports",vals["unique_ports"]),("Data sent",f'{vals["bytes_sent_kb"]:,} KB')]):
         col.markdown(f'<div class="metric"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>',unsafe_allow_html=True)
+
+elif page=="Threat Intel":
+    st.subheader("🌐 Threat intelligence lookup")
+    st.markdown('<p class="muted">Look up real reputation data from AbuseIPDB and VirusTotal. Keys are read from Streamlit Secrets and never shown.</p>',unsafe_allow_html=True)
+    ks=ti.key_status()
+    if not any(ks.values()):
+        st.warning("No API keys configured. Add ABUSEIPDB_API_KEY and VIRUSTOTAL_API_KEY in Streamlit Secrets (App → Settings → Secrets). The rest of the dashboard still works without them.")
+    tab1,tab2=st.tabs(["AbuseIPDB · IP check","VirusTotal · IP / domain / URL / hash"])
+    with tab1:
+        ip=st.text_input("IP address",key="ab_ip",placeholder="e.g. 118.25.6.39")
+        if st.button("Check with AbuseIPDB"):
+            with st.spinner("Contacting AbuseIPDB..."): render_intel(ti.check_abuseipdb(ip),None)
+    with tab2:
+        ind=st.text_input("Indicator",key="vt_ind",placeholder="IP, domain, https://url or file hash")
+        if st.button("Check with VirusTotal"):
+            with st.spinner("Contacting VirusTotal..."): render_intel(None,ti.check_virustotal(ind))
+    st.info("Free API tiers have rate limits (VirusTotal ~4 requests/min). Errors are shown here instead of crashing the app.")
 
 elif page=="Model Performance":
     st.subheader("📊 Model insights")
@@ -130,7 +183,7 @@ elif page=="How It Works":
 else:
     st.subheader("🎓 Project details")
     st.write("**Goal:** Demonstrate one intelligent agent that uses ML predictions to choose a response to potentially suspicious activity.")
-    st.write("**Technology:** Python, Streamlit, Pandas, NumPy, Scikit-learn.")
+    st.write("**Technology:** Python, Streamlit, Pandas, NumPy, Scikit-learn, Requests, AbuseIPDB API, VirusTotal API.")
     st.write("**Model:** Random Forest classifier.")
     st.write("**Agent type:** One model-assisted, rule-guided intelligent agent.")
     st.warning("The model is trained on synthetic data generated in this code. This is an educational prototype, not a production security product.")
